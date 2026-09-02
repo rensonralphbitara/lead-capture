@@ -10,6 +10,7 @@
     var DEBUG = "1" === new URLSearchParams(window.location.search).get("lc_debug");
 
     var STORAGE_KEY = "_lc_attribution";
+    var cachedAttribution = null;
 
     function log(msg, data) {
         if (DEBUG) console.log("[LeadCapture] " + msg, data !== undefined ? data : "");
@@ -18,6 +19,16 @@
     function getCookie(name) {
         var parts = ("; " + document.cookie).split("; " + name + "=");
         return parts.length === 2 ? parts.pop().split(";").shift() : null;
+    }
+
+    function setCookie(name, value) {
+        try {
+            var expires = new Date();
+            expires.setTime(expires.getTime() + 31536e6); // 1 year
+            document.cookie = name + "=" + value + ";expires=" + expires.toUTCString() + ";path=/;SameSite=Lax;Secure";
+        } catch (e) {
+            log("Cookie write failed", e);
+        }
     }
 
     function readStoredAttribution() {
@@ -62,27 +73,80 @@
         return attr;
     }
 
-    // Returns cached attribution, refreshing it only when new tracking params show up in the URL.
-    function getAttribution() {
-        var params = new URL(window.location.href).searchParams;
-        var hasTrackingParams = ["utm_source", "gclid", "fbclid", "click_id"].some(function (key) {
+    function hasTrackingParams(url) {
+        var params = new URL(url).searchParams;
+        return ["utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid", "click_id"].some(function (key) {
             return params.has(key);
         });
+    }
 
-        if (hasTrackingParams) {
+    // Mirrors optimizer.js: fresh URL params win, then in-memory cache, then localStorage,
+    // then backup cookies (survive storage clears), then a fresh capture as last resort.
+    function getAttribution() {
+        if (hasTrackingParams(window.location.href)) {
             var fresh = captureFreshAttribution();
+            cachedAttribution = fresh;
             storeAttribution(fresh);
+            if (fresh.gclid) setCookie("_lc_gclid", fresh.gclid);
+            if (fresh.fbclid) setCookie("_lc_fbclid", fresh.fbclid);
+            if (fresh.utm_source) setCookie("_lc_utm_source", fresh.utm_source);
             log("Captured fresh attribution", fresh);
             return fresh;
         }
 
+        if (cachedAttribution) return cachedAttribution;
+
         var stored = readStoredAttribution();
-        if (stored) return stored;
+        if (stored) {
+            cachedAttribution = stored;
+            return stored;
+        }
+
+        var recovered = {
+            gclid: getCookie("_lc_gclid"),
+            fbclid: getCookie("_lc_fbclid"),
+            utm_source: getCookie("_lc_utm_source")
+        };
+        if (recovered.gclid || recovered.fbclid || recovered.utm_source) {
+            log("Recovered attribution from backup cookies");
+            cachedAttribution = recovered;
+            storeAttribution(recovered);
+            return recovered;
+        }
 
         var initial = captureFreshAttribution();
+        cachedAttribution = initial;
         storeAttribution(initial);
         log("Captured initial attribution", initial);
         return initial;
+    }
+
+    // Re-captures attribution on SPA route changes (pushState/replaceState/popstate) if new
+    // tracking params appear, without needing a full page reload.
+    function watchUrlChanges() {
+        var lastUrl = window.location.href;
+        var originalPushState = history.pushState;
+        var originalReplaceState = history.replaceState;
+
+        function onUrlChange() {
+            var current = window.location.href;
+            if (current === lastUrl) return;
+            lastUrl = current;
+            if (hasTrackingParams(current)) {
+                log("URL changed with new tracking params, refreshing attribution");
+                getAttribution();
+            }
+        }
+
+        history.pushState = function () {
+            originalPushState.apply(this, arguments);
+            onUrlChange();
+        };
+        history.replaceState = function () {
+            originalReplaceState.apply(this, arguments);
+            onUrlChange();
+        };
+        window.addEventListener("popstate", onUrlChange);
     }
 
     function getFormFields(form) {
@@ -143,5 +207,7 @@
     }
 
     document.addEventListener("submit", handleFormSubmit, true);
+    getAttribution(); // capture/store attribution on page load, not just on submit
+    watchUrlChanges(); // keep attribution fresh across SPA route changes
     log("Lead capture initialized", { customerName: CUSTOMER_NAME, webhookUrl: WEBHOOK_URL });
 })();

@@ -110,20 +110,16 @@
         var body = JSON.stringify(payload);
         log("Sending payload", payload);
 
-        if (navigator.sendBeacon) {
-            var blob = new Blob([body], { type: "application/json" });
-            var sent = navigator.sendBeacon(WEBHOOK_URL, blob);
-            log("Sent via beacon:", sent);
-            if (sent) return;
-        }
-
+        // no-cors avoids the preflight (and Zapier's wildcard CORS + credentials conflict);
+        // the response is opaque, but we don't need to read it.
         fetch(WEBHOOK_URL, {
             method: "POST",
+            mode: "no-cors",
             headers: { "Content-Type": "application/json" },
             body: body,
             keepalive: true
-        }).then(function (res) {
-            log(res.ok ? "Sent successfully" : "Webhook returned HTTP " + res.status);
+        }).then(function () {
+            log("Sent (opaque response, assumed delivered)");
         }).catch(function (err) {
             log("Failed to send payload", err);
         });

@@ -56,8 +56,6 @@
             utm_campaign: params.get("utm_campaign") || null,
             utm_term: params.get("utm_term") || null,
             utm_content: params.get("utm_content") || null,
-            utm_id: params.get("utm_id") || null,
-            click_id: params.get("click_id") || null,
             gclid: params.get("gclid") || null,
             gbraid: params.get("gbraid") || null,
             wbraid: params.get("wbraid") || null,
@@ -75,7 +73,7 @@
 
     function hasTrackingParams(url) {
         var params = new URL(url).searchParams;
-        return ["utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid", "click_id"].some(function (key) {
+        return ["utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid"].some(function (key) {
             return params.has(key);
         });
     }
@@ -166,6 +164,37 @@
         return fields;
     }
 
+    function normalizeKey(key) {
+        return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+
+    function findField(normalizedFields, candidates) {
+        for (var i = 0; i < candidates.length; i++) {
+            var value = normalizedFields[candidates[i]];
+            if (value != null && value.toString().trim() !== "") return value.toString().trim();
+        }
+        return null;
+    }
+
+    // Derives static name/email/phone values from whatever field names the form actually uses
+    // (e.g. separate FirstName/LastName inputs get combined into one name).
+    function deriveContactFields(fields) {
+        var normalizedFields = {};
+        for (var key in fields) {
+            if (fields.hasOwnProperty(key)) normalizedFields[normalizeKey(key)] = fields[key];
+        }
+
+        var fullName = findField(normalizedFields, ["name", "fullname", "yourname", "contactname"]);
+        var firstName = findField(normalizedFields, ["firstname", "fname", "first", "givenname"]);
+        var lastName = findField(normalizedFields, ["lastname", "lname", "last", "surname"]);
+
+        var name = fullName || [firstName, lastName].filter(Boolean).join(" ") || "";
+        var email = findField(normalizedFields, ["email", "emailaddress", "youremail"]) || "";
+        var phone = findField(normalizedFields, ["phone", "phonenumber", "tel", "telephone", "mobile", "mobilenumber", "yourphone"]) || "";
+
+        return { name: name, email: email, phone: phone };
+    }
+
     function sendToWebhook(payload) {
         if (!WEBHOOK_URL) {
             log("No webhookUrl configured, skipping send");
@@ -193,13 +222,19 @@
         var form = event.target;
         if (!form || form.tagName !== "FORM") return;
 
+        var fields = getFormFields(form);
+        var contact = deriveContactFields(fields);
+
         var payload = {
             customerName: CUSTOMER_NAME,
             eventType: "form_submit",
             timestamp: new Date().toISOString(),
             pageUrl: window.location.href,
             formId: form.getAttribute("id") || form.getAttribute("name") || null,
-            fields: getFormFields(form),
+            name: contact.name,
+            email: contact.email,
+            phone: contact.phone,
+            fields: fields,
             attribution: getAttribution()
         };
 

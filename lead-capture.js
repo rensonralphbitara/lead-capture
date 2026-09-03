@@ -48,6 +48,20 @@
         }
     }
 
+    function generateRandomId() {
+        return Math.floor(Math.random() * 2147483647).toString();
+    }
+
+    // Meta Pixel normally sets _fbp itself; without it on the page this fills the gap so
+    // fbp is still populated, using the pixel's own fb.<version>.<timestamp>.<random> format.
+    function getOrCreateFbp() {
+        var existing = getCookie("_fbp");
+        if (existing) return existing;
+        var generated = "fb.1." + Date.now() + "." + generateRandomId();
+        setCookie("_fbp", generated);
+        return generated;
+    }
+
     function captureFreshAttribution() {
         var params = new URL(window.location.href).searchParams;
         var attr = {
@@ -60,7 +74,7 @@
             gbraid: params.get("gbraid") || null,
             wbraid: params.get("wbraid") || null,
             fbclid: params.get("fbclid") || null,
-            fbp: getCookie("_fbp") || null,
+            fbp: getOrCreateFbp(),
             fbc: getCookie("_fbc") || null,
             landing_page: window.location.href,
             referrer: document.referrer || null

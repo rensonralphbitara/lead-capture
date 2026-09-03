@@ -234,7 +234,7 @@
             name: contact.name,
             email: contact.email,
             phone: contact.phone,
-            fields: fields,
+            formData: JSON.stringify(fields),
             attribution: getAttribution()
         };
 
